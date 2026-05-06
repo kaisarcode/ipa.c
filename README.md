@@ -1,6 +1,6 @@
 # ipa.c - Island Parser
 
-`ipa.c` is a compact, stand-alone text island parser library and CLI. It compiles a `schema.json` manifest into a portable binary resource (`.ipa`) and provides semantic node matching against that resource at runtime.
+`ipa.c` is a compact, stand-alone island parser library and CLI. Given a schema of named nodes and example descriptions, it finds which nodes match spans of natural language text, what they emit, and how they break down into child nodes.
 
 ---
 
