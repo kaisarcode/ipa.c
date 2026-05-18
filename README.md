@@ -82,7 +82,7 @@ Schemas are defined in JSON with schema `ipa.map.v1`:
   "schema": "ipa.map.v1",
   "id": "myschema",
   "vendor": "myvendor",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "defaults": {
     "node_threshold": 0.80,
     "min_ngram": 1,

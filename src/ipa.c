@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define KC_IPA_VERSION "0.1.0"
+#define KC_IPA_VERSION "1.0.0"
 
 /**
  * Reads all of standard input into a dynamically allocated buffer.
