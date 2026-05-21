@@ -17,7 +17,7 @@ if(NOT IPA_USE_VENDORED_LIBS)
     message(FATAL_ERROR "External prebuilt kclib artifacts are not supported by default")
 endif()
 
-## ── Compiler flags ────────────────────────────────────────────────────────────
+## Compiler flags
 
 if(NOT MSVC)
     add_compile_options(-O3 -fno-finite-math-only -Wall -Wextra -Werror)
@@ -27,7 +27,7 @@ else()
     add_definitions(-DGGML_USE_CPU -DGGML_VERSION="1" -DGGML_COMMIT="custom")
 endif()
 
-## ── Target platform ───────────────────────────────────────────────────────────
+## Target platform
 
 if(NOT DEFINED KC_PLATFORM OR KC_PLATFORM STREQUAL "")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -41,7 +41,7 @@ if(NOT DEFINED KC_PLATFORM OR KC_PLATFORM STREQUAL "")
     endif()
 endif()
 
-## ── Vendored dependency sources ───────────────────────────────────────────────
+## Vendored dependency sources
 
 set(IPA_VENDOR_INCLUDES
     src
@@ -131,7 +131,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 
-## ── Embedded model ────────────────────────────────────────────────────────────
+## Embedded model
 
 set(MODEL_GGUF "${CMAKE_SOURCE_DIR}/lib/model.gguf")
 
@@ -240,7 +240,7 @@ endif()
 set_source_files_properties("${MODEL_OBJ}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
 set(IPA_VENDOR_SOURCES ${IPA_KCLIB_SOURCES} ${GGML_SOURCES} "${MODEL_OBJ}")
 
-## ── Static library ────────────────────────────────────────────────────────────
+## Static library
 
 add_library(ipa_static STATIC src/libipa.c ${IPA_VENDOR_SOURCES})
 
@@ -248,7 +248,7 @@ set_target_properties(ipa_static PROPERTIES OUTPUT_NAME "ipa" POSITION_INDEPENDE
 
 target_include_directories(ipa_static PRIVATE ${IPA_VENDOR_INCLUDES})
 
-## ── Shared library ────────────────────────────────────────────────────────────
+## Shared library
 
 add_library(ipa_shared SHARED src/libipa.c ${IPA_VENDOR_SOURCES})
 
@@ -267,7 +267,7 @@ elseif(WIN32)
     target_link_libraries(ipa_shared stdc++)
 endif()
 
-## ── Executable ────────────────────────────────────────────────────────────────
+## Executable
 
 add_executable(ipa src/ipa.c src/libipa.c ${IPA_VENDOR_SOURCES})
 
