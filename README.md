@@ -198,11 +198,11 @@ make loongarch64/linux
 
 | Path | Description |
 |------|-------------|
-| `lib/ggml/` | Vendored GGML tensor computation library |
-| `lib/emb.h`, `lib/libemb.c` | Copied from emb.c for vector embeddings |
-| `lib/hnsw.h`, `lib/libhnsw.c` | Copied from hnsw.c for approximate nearest neighbor search |
-| `lib/mmap.h`, `lib/libmmap.c` | Copied from mmap.c for memory-mapped I/O |
-| `lib/ngram.h` | Copied from ngram.c for n-gram text processing |
+| `lib/ggml/` | Tensor computation library for machine learning |
+| `lib/emb.h`, `lib/libemb.c` | Vector embeddings library |
+| `lib/hnsw.h`, `lib/libhnsw.c` | Approximate nearest neighbor search library |
+| `lib/mmap.h`, `lib/libmmap.c` | Memory-mapped I/O library |
+| `lib/ngram.h` | N-gram text processing library |
 | `lib/model.gguf` | Embedded model weights |
 
 ---
