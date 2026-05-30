@@ -155,7 +155,7 @@ static void print_help(const char *name) {
     printf("\n");
     printf("Options:\n");
     printf("    -b, --build         Compile schema.json into schema.ipa\n");
-    printf("    -h, --help          Show this help message\n");
+    printf("    -h, --help          Show this help\n");
     printf("    -v, --version       Show version\n");
 }
 
