@@ -64,21 +64,38 @@ typedef struct {
     int             match_count;
 } kc_ipa_result_t;
 
+typedef void (*kc_ipa_signal_callback_t)(kc_ipa_schema_t *ctx);
+
+typedef struct {
+    char *schema_path;
+} kc_ipa_options_t;
+
+kc_ipa_options_t kc_ipa_options_default(void);
+void kc_ipa_options_load_env(kc_ipa_options_t *opts);
+void kc_ipa_options_free(kc_ipa_options_t *opts);
+
+int kc_ipa_on_signal(kc_ipa_schema_t *ctx, int sig, kc_ipa_signal_callback_t cb);
+int kc_ipa_raise_signal(kc_ipa_schema_t *ctx, int sig);
+int kc_ipa_listen_signals(kc_ipa_schema_t *ctx);
+int kc_ipa_listen_signal(kc_ipa_schema_t *ctx, int sig_id);
+void kc_ipa_signal_listener(int sig);
+
 /**
  * Open a compiled schema resource.
  * Maps the .ipa file into memory and builds runtime indexes.
  * The caller owns the returned handle and must call kc_ipa_close().
- * @param path Path to a compiled .ipa file.
- * @return Schema handle or NULL on failure.
+ * @param ctx  Pointer to destination schema handle.
+ * @param opts Configuration options.
+ * @return KC_IPA_OK on success, KC_IPA_ERROR on failure.
  */
-kc_ipa_schema_t *kc_ipa_open(const char *path);
+int kc_ipa_open(kc_ipa_schema_t **ctx, kc_ipa_options_t *opts);
 
 /**
  * Close a compiled schema resource and release all resources.
  * @param schema Schema handle.
- * @return None.
+ * @return KC_IPA_OK.
  */
-void kc_ipa_close(kc_ipa_schema_t *schema);
+int kc_ipa_close(kc_ipa_schema_t *schema);
 
 /**
  * Parse input text against a compiled schema.

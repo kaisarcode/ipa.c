@@ -25,9 +25,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 
 #ifndef _WIN32
 #include <pthread.h>
+#include <signal.h>
 #else
 #include <windows.h>
 #define strncasecmp _strnicmp
@@ -38,6 +40,30 @@
 #define KC_IPA_MAX_DEPTH      8
 #define KC_IPA_STRTAB_INIT    65536
 #define KC_IPA_BUF_INIT       131072
+
+typedef enum {
+    KC_ENV_TYPE_INT,
+    KC_ENV_TYPE_FLOAT,
+    KC_ENV_TYPE_STR,
+} kc_env_type_t;
+
+typedef struct {
+    const char *env_var;
+    size_t offset;
+    kc_env_type_t type;
+} kc_env_map_t;
+
+static const kc_env_map_t env_config_table[] = {
+    { "KC_IPA_SCHEMA", offsetof(kc_ipa_options_t, schema_path), KC_ENV_TYPE_STR },
+};
+static const int env_config_table_n = sizeof(env_config_table) / sizeof(env_config_table[0]);
+
+typedef struct {
+    int sig;
+    kc_ipa_signal_callback_t cb;
+} kc_ipa_signal_entry_t;
+
+static kc_ipa_schema_t *g_signal_ctx = NULL;
 
 #define KC_IPA_MAGIC_0        'K'
 #define KC_IPA_MAGIC_1        'I'
@@ -140,6 +166,11 @@ typedef struct {
 } kc_ipa_runtime_index_t;
 
 struct kc_ipa_schema {
+    kc_ipa_options_t opts;
+    kc_ipa_signal_entry_t *signal_handlers;
+    int n_signal_handlers;
+    int signal_handlers_capacity;
+
     kc_mmap_t            mmap;
     kc_emb_t            *emb;
     int                  emb_dim;
@@ -1287,47 +1318,209 @@ static kc_hnsw_t *kc_ipa_build_hnsw(
 }
 
 /**
- * Opens and validates a compiled .ipa schema file, returning a runtime schema.
- * @param path Path to the .ipa binary file.
- * @return Allocated schema handle on success, or NULL on failure.
+ * Return default options for the library.
+ * @return Default options struct.
  */
-kc_ipa_schema_t *kc_ipa_open(const char *path) {
+kc_ipa_options_t kc_ipa_options_default(void) {
+    kc_ipa_options_t opts;
+    memset(&opts, 0, sizeof(opts));
+    return opts;
+}
+
+/**
+ * Load configuration overrides from environment variables.
+ * @param opts Options to override.
+ * @return None.
+ */
+void kc_ipa_options_load_env(kc_ipa_options_t *opts) {
+    if (!opts) return;
+    int i;
+    for (i = 0; i < env_config_table_n; i++) {
+        const char *val = getenv(env_config_table[i].env_var);
+        if (!val) continue;
+        switch (env_config_table[i].type) {
+            case KC_ENV_TYPE_INT: {
+                char *end;
+                long v = strtol(val, &end, 10);
+                if (end != val && *end == '\0')
+                    *(int *)((char *)opts + env_config_table[i].offset) = (int)v;
+                break;
+            }
+            case KC_ENV_TYPE_FLOAT: {
+                char *end;
+                float v = strtof(val, &end);
+                if (end != val && *end == '\0')
+                    *(float *)((char *)opts + env_config_table[i].offset) = v;
+                break;
+            }
+            case KC_ENV_TYPE_STR: {
+                char **p = (char **)((char *)opts + env_config_table[i].offset);
+                free(*p);
+                *p = strdup(val);
+                break;
+            }
+        }
+    }
+}
+
+/**
+ * Release resources owned by options struct.
+ * @param opts Options to free.
+ * @return None.
+ */
+void kc_ipa_options_free(kc_ipa_options_t *opts) {
+    if (!opts) return;
+    free(opts->schema_path);
+    opts->schema_path = NULL;
+}
+
+/**
+ * Register or remove a signal handler.
+ * @param ctx Context handle.
+ * @param sig Signal ID.
+ * @param cb  Callback or NULL to remove.
+ * @return KC_IPA_OK on success, KC_IPA_ERROR on failure.
+ */
+int kc_ipa_on_signal(kc_ipa_schema_t *ctx, int sig, kc_ipa_signal_callback_t cb) {
+    int i;
+    for (i = 0; i < ctx->n_signal_handlers; i++) {
+        if (ctx->signal_handlers[i].sig == sig) {
+            if (cb) {
+                ctx->signal_handlers[i].cb = cb;
+            } else {
+                int tail = ctx->n_signal_handlers - i - 1;
+                if (tail > 0)
+                    memmove(&ctx->signal_handlers[i],
+                            &ctx->signal_handlers[i + 1],
+                            (size_t)tail * sizeof(kc_ipa_signal_entry_t));
+                ctx->n_signal_handlers--;
+            }
+            return KC_IPA_OK;
+        }
+    }
+    if (!cb) return KC_IPA_OK;
+    if (ctx->n_signal_handlers >= ctx->signal_handlers_capacity) {
+        int new_cap = ctx->signal_handlers_capacity ? ctx->signal_handlers_capacity * 2 : 4;
+        kc_ipa_signal_entry_t *p = (kc_ipa_signal_entry_t *)realloc(ctx->signal_handlers,
+            (size_t)new_cap * sizeof(kc_ipa_signal_entry_t));
+        if (!p) return KC_IPA_ERROR;
+        ctx->signal_handlers = p;
+        ctx->signal_handlers_capacity = new_cap;
+    }
+    ctx->signal_handlers[ctx->n_signal_handlers].sig = sig;
+    ctx->signal_handlers[ctx->n_signal_handlers].cb = cb;
+    ctx->n_signal_handlers++;
+    return KC_IPA_OK;
+}
+
+/**
+ * Raise a signal, calling the registered callback if any.
+ * @param ctx Context handle.
+ * @param sig Signal ID.
+ * @return KC_IPA_OK if handled, KC_IPA_ERROR if not.
+ */
+int kc_ipa_raise_signal(kc_ipa_schema_t *ctx, int sig) {
+    int i;
+    for (i = 0; i < ctx->n_signal_handlers; i++) {
+        if (ctx->signal_handlers[i].sig == sig) {
+            ctx->signal_handlers[i].cb(ctx);
+            return KC_IPA_OK;
+        }
+    }
+    return KC_IPA_ERROR;
+}
+
+/**
+ * Store context internally for use by the static signal listener.
+ * @param ctx Context handle.
+ * @return KC_IPA_OK on success, KC_IPA_ERROR on failure.
+ */
+int kc_ipa_listen_signals(kc_ipa_schema_t *ctx) {
+    if (!ctx) return KC_IPA_ERROR;
+    g_signal_ctx = ctx;
+    return KC_IPA_OK;
+}
+
+/**
+ * Wire a specific OS signal to the library listener.
+ * @param ctx    Context handle.
+ * @param sig_id OS signal ID.
+ * @return KC_IPA_OK on success, KC_IPA_ERROR on failure.
+ */
+int kc_ipa_listen_signal(kc_ipa_schema_t *ctx, int sig_id) {
+    if (!ctx) return KC_IPA_ERROR;
+    g_signal_ctx = ctx;
+#ifdef _WIN32
+    (void)sig_id;
+#else
+    signal(sig_id, kc_ipa_signal_listener);
+#endif
+    return KC_IPA_OK;
+}
+
+/**
+ * Generic OS-signal handler.
+ * @param sig OS signal ID.
+ * @return None.
+ */
+void kc_ipa_signal_listener(int sig) {
+    if (g_signal_ctx)
+        kc_ipa_raise_signal(g_signal_ctx, sig);
+}
+
+/**
+ * Opens and validates a compiled .ipa schema file, returning a runtime schema.
+ * @param ctx_out Destination schema handle pointer.
+ * @param opts    Configuration options.
+ * @return KC_IPA_OK on success, KC_IPA_ERROR on failure.
+ */
+int kc_ipa_open(kc_ipa_schema_t **ctx_out, kc_ipa_options_t *opts) {
+    if (!ctx_out || !opts || !opts->schema_path) return KC_IPA_ERROR;
+    *ctx_out = NULL;
+
     kc_ipa_schema_t *s = (kc_ipa_schema_t *)calloc(1, sizeof(*s));
-    if (!s) return NULL;
+    if (!s) return KC_IPA_ERROR;
+
+    s->opts = *opts;
+    s->opts.schema_path = strdup(opts->schema_path);
+    if (!s->opts.schema_path) { free(s); return KC_IPA_ERROR; }
+    s->signal_handlers = NULL;
+    s->n_signal_handlers = 0;
+    s->signal_handlers_capacity = 0;
 
 #ifndef _WIN32
-    if (pthread_mutex_init(&s->lock, NULL) != 0) { free(s); return NULL; }
+    if (pthread_mutex_init(&s->lock, NULL) != 0) { free(s->opts.schema_path); free(s); return KC_IPA_ERROR; }
 #else
     InitializeCriticalSection(&s->lock);
 #endif
 
-    if (kc_mmap_open(&s->mmap, path) != KC_MMAP_OK) {
-        fprintf(stderr, "ipa: cannot open %s\n", path);
+    if (kc_mmap_open(&s->mmap, s->opts.schema_path) != KC_MMAP_OK) {
+        fprintf(stderr, "ipa: cannot open %s\n", s->opts.schema_path);
         goto fail;
     }
 
     const uint8_t *base  = (const uint8_t *)kc_mmap_data(&s->mmap);
     size_t         fsz   = kc_mmap_size(&s->mmap);
 
-    if (fsz < sizeof(kc_ipa_file_hdr_t)) { fprintf(stderr, "ipa: file too small: %s\n", path); goto fail; }
+    if (fsz < sizeof(kc_ipa_file_hdr_t)) { fprintf(stderr, "ipa: file too small: %s\n", s->opts.schema_path); goto fail; }
 
     const kc_ipa_file_hdr_t *hdr = (const kc_ipa_file_hdr_t *)base;
 
     if (hdr->magic[0] != KC_IPA_MAGIC_0 || hdr->magic[1] != KC_IPA_MAGIC_1 ||
         hdr->magic[2] != KC_IPA_MAGIC_2 || hdr->magic[3] != KC_IPA_MAGIC_3) {
-        fprintf(stderr, "ipa: invalid magic: %s\n", path);
+        fprintf(stderr, "ipa: invalid magic: %s\n", s->opts.schema_path);
         goto fail;
     }
     if (hdr->version != KC_IPA_FMT_VERSION) {
-        fprintf(stderr, "ipa: unsupported version %u: %s\n", hdr->version, path);
+        fprintf(stderr, "ipa: unsupported version %u: %s\n", hdr->version, s->opts.schema_path);
         goto fail;
     }
     if (hdr->file_size != (uint32_t)fsz) {
-        fprintf(stderr, "ipa: file size mismatch: %s\n", path);
+        fprintf(stderr, "ipa: file size mismatch: %s\n", s->opts.schema_path);
         goto fail;
     }
     if (!kc_ipa_bounds_ok(base, fsz, hdr->strtab_off, hdr->strtab_size)) {
-        fprintf(stderr, "ipa: corrupt strtab: %s\n", path);
+        fprintf(stderr, "ipa: corrupt strtab: %s\n", s->opts.schema_path);
         goto fail;
     }
 
@@ -1369,20 +1562,21 @@ kc_ipa_schema_t *kc_ipa_open(const char *path) {
         idx->child_meta_count = hdr->child_meta_count;
     }
 
-    return s;
+    *ctx_out = s;
+    return KC_IPA_OK;
 
 fail:
     kc_ipa_close(s);
-    return NULL;
+    return KC_IPA_ERROR;
 }
 
 /**
  * Closes a schema handle and releases all associated resources.
  * @param s Schema handle to close. Safe to call with NULL.
- * @return None.
+ * @return KC_IPA_OK.
  */
-void kc_ipa_close(kc_ipa_schema_t *s) {
-    if (!s) return;
+int kc_ipa_close(kc_ipa_schema_t *s) {
+    if (!s) return KC_IPA_OK;
     kc_hnsw_close(s->index.node_hnsw);
     kc_hnsw_close(s->index.child_hnsw);
     kc_emb_close(s->emb);
@@ -1392,7 +1586,10 @@ void kc_ipa_close(kc_ipa_schema_t *s) {
 #else
     DeleteCriticalSection(&s->lock);
 #endif
+    kc_ipa_options_free(&s->opts);
+    free(s->signal_handlers);
     free(s);
+    return KC_IPA_OK;
 }
 
 /**

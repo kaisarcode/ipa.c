@@ -132,7 +132,11 @@ Emit values are literal strings. The special value `"$raw"` is resolved at runti
 #include "ipa.h"
 
 /* Open a compiled schema resource */
-kc_ipa_schema_t *schema = kc_ipa_open("path/to/schema.ipa");
+kc_ipa_options_t opts = kc_ipa_options_default();
+opts.schema_path = strdup("path/to/schema.ipa");
+kc_ipa_schema_t *schema = NULL;
+kc_ipa_open(&schema, &opts);
+kc_ipa_listen_signals(schema);
 
 /* Parse input */
 kc_ipa_result_t result;
@@ -146,17 +150,18 @@ if (result.ok) {
 /* Free result and schema */
 kc_ipa_result_free(&result);
 kc_ipa_close(schema);
+kc_ipa_options_free(&opts);
 ```
 
 ---
 
 ## Lifecycle
 
-- `kc_ipa_open()` — maps the `.ipa` resource into memory and builds runtime HNSW indexes.
-- `kc_ipa_parse()` — scans input for semantic islands and scores them against the schema. Thread-safe.
-- `kc_ipa_result_free()` — releases all strings and arrays owned by a result.
-- `kc_ipa_close()` — releases all resources owned by the schema handle.
-- `kc_ipa_build()` — compiles a `schema.json` manifest into a `.ipa` binary resource.
+- `kc_ipa_open()` - maps the `.ipa` resource into memory and builds runtime HNSW indexes.
+- `kc_ipa_parse()` - scans input for semantic islands and scores them against the schema. Thread-safe.
+- `kc_ipa_result_free()` - releases all strings and arrays owned by a result.
+- `kc_ipa_close()` - releases all resources owned by the schema handle.
+- `kc_ipa_build()` - compiles a `schema.json` manifest into a `.ipa` binary resource.
 
 ---
 

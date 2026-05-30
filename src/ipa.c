@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define KC_IPA_VERSION "1.0.0"
+#define KC_IPA_VERSION "1.1.0"
 
 /**
  * Reads all of standard input into a dynamically allocated buffer.
@@ -174,51 +174,68 @@ static void print_version(void) {
  * @return Process status code.
  */
 int main(int argc, char **argv) {
-    const char *schema_path = NULL;
+    kc_ipa_options_t opts = kc_ipa_options_default();
+    kc_ipa_options_load_env(&opts);
+
     const char *text_arg    = NULL;
     int build_mode = 0;
     int i = 1;
+    int pos_count = 0;
 
     while (i < argc) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_help(argv[0]);
+            kc_ipa_options_free(&opts);
             return 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             print_version();
+            kc_ipa_options_free(&opts);
             return 0;
         } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--build") == 0) {
             build_mode = 1;
         } else if (argv[i][0] != '-') {
-            if (!schema_path)  schema_path = argv[i];
-            else if (!text_arg) text_arg   = argv[i];
+            if (pos_count == 0) {
+                free(opts.schema_path);
+                opts.schema_path = strdup(argv[i]);
+                pos_count++;
+            } else if (pos_count == 1) {
+                text_arg = argv[i];
+                pos_count++;
+            }
         } else {
             fprintf(stderr, "ipa: unknown option '%s'\n", argv[i]);
+            kc_ipa_options_free(&opts);
             return 1;
         }
         i++;
     }
 
-    if (!schema_path) { print_help(argv[0]); return 1; }
+    if (!opts.schema_path) {
+        print_help(argv[0]);
+        kc_ipa_options_free(&opts);
+        return 1;
+    }
 
     if (build_mode) {
-        size_t plen = strlen(schema_path);
+        size_t plen = strlen(opts.schema_path);
         char *out_path;
-        if (plen > 5 && strcmp(schema_path + plen - 5, ".json") == 0) {
+        if (plen > 5 && strcmp(opts.schema_path + plen - 5, ".json") == 0) {
             out_path = (char *)malloc(plen + 1);
-            if (!out_path) { fprintf(stderr, "ipa: out of memory\n"); return 1; }
-            memcpy(out_path, schema_path, plen - 5);
+            if (!out_path) { fprintf(stderr, "ipa: out of memory\n"); kc_ipa_options_free(&opts); return 1; }
+            memcpy(out_path, opts.schema_path, plen - 5);
             memcpy(out_path + plen - 5, ".ipa", 5);
         } else {
             out_path = (char *)malloc(plen + 5);
-            if (!out_path) { fprintf(stderr, "ipa: out of memory\n"); return 1; }
-            memcpy(out_path, schema_path, plen);
+            if (!out_path) { fprintf(stderr, "ipa: out of memory\n"); kc_ipa_options_free(&opts); return 1; }
+            memcpy(out_path, opts.schema_path, plen);
             memcpy(out_path + plen, ".ipa", 5);
         }
 
-        int rc = kc_ipa_build(schema_path, out_path);
+        int rc = kc_ipa_build(opts.schema_path, out_path);
         free(out_path);
-        if (rc == KC_IPA_EFORMAT) { fprintf(stderr, "ipa: invalid schema: %s\n", schema_path); return 2; }
-        if (rc != KC_IPA_OK)      { fprintf(stderr, "ipa: build failed: %s\n", schema_path);   return 2; }
+        if (rc == KC_IPA_EFORMAT) { fprintf(stderr, "ipa: invalid schema: %s\n", opts.schema_path); kc_ipa_options_free(&opts); return 2; }
+        if (rc != KC_IPA_OK)      { fprintf(stderr, "ipa: build failed: %s\n", opts.schema_path); kc_ipa_options_free(&opts); return 2; }
+        kc_ipa_options_free(&opts);
         return 0;
     }
 
@@ -226,14 +243,21 @@ int main(int argc, char **argv) {
     const char *text = text_arg;
 
     if (!text) {
-        if (read_stdin(&stdin_text) != 0) { fprintf(stderr, "ipa: failed to read stdin\n"); return 1; }
+        if (read_stdin(&stdin_text) != 0) { fprintf(stderr, "ipa: failed to read stdin\n"); kc_ipa_options_free(&opts); return 1; }
         text = stdin_text;
     }
 
-    if (!text || !*text) { free(stdin_text); return 0; }
+    if (!text || !*text) { free(stdin_text); kc_ipa_options_free(&opts); return 0; }
 
-    kc_ipa_schema_t *schema = kc_ipa_open(schema_path);
-    if (!schema) { fprintf(stderr, "ipa: failed to open schema: %s\n", schema_path); free(stdin_text); return 1; }
+    kc_ipa_schema_t *schema = NULL;
+    if (kc_ipa_open(&schema, &opts) != KC_IPA_OK) {
+        fprintf(stderr, "ipa: failed to open schema: %s\n", opts.schema_path);
+        free(stdin_text);
+        kc_ipa_options_free(&opts);
+        return 1;
+    }
+
+    kc_ipa_listen_signals(schema);
 
     kc_ipa_result_t result;
     int rc = kc_ipa_parse(schema, text, &result);
@@ -241,6 +265,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ipa: parse failed (rc=%d)\n", rc);
         kc_ipa_close(schema);
         free(stdin_text);
+        kc_ipa_options_free(&opts);
         return 1;
     }
 
@@ -248,5 +273,6 @@ int main(int argc, char **argv) {
     kc_ipa_result_free(&result);
     kc_ipa_close(schema);
     free(stdin_text);
+    kc_ipa_options_free(&opts);
     return 0;
 }
